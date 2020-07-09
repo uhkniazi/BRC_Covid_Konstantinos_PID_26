@@ -96,3 +96,29 @@ f_binData = function(x, m=0, m2=0.3, b=4, lab=c(0, 1, 2)){
   br = c(m, seq(m2, max(x), length.out = b-1))
   return(cut(x, breaks = br, right = T, include.lowest = T, labels = lab))
 }
+
+
+## hist2
+## create an overlapping histogram by splitting data vector
+## into 2 groups, typical usage would be to check overlap and
+## balance of covariates between two experimental groups
+## code idea from https://stackoverflow.com/questions/3541713/how-to-plot-two-histograms-together-in-r
+hist2 = function(x, y, main='', xlab='Values', ylab='Density', legends=c('Value 1', 'Value 2'), legend.pos='topright'){
+  p1 = hist(x,plot=FALSE)
+  p2 = hist(y,plot=FALSE)
+  ## calculate the range of the graph
+  xlim = range(p1$breaks,p2$breaks)
+  ylim = range(0,p1$density,
+               p2$density)
+  plot(p1,xlim = xlim, ylim = ylim,
+       col = rgb(1,0,0,0.4),xlab = xlab, ylab=ylab,
+       freq = FALSE, ## relative, not absolute frequency
+       main = main)
+  plot(p2,xlim = xlim, ylim = ylim,
+       xaxt = 'n', yaxt = 'n', ## don't add axes
+       col = rgb(0,0,1,0.4), add = TRUE,
+       freq = FALSE)
+  legend(legend.pos, legends,
+         fill = rgb(1:0,0,0:1,0.4), bty = 'n',
+         border = NA)
+}
