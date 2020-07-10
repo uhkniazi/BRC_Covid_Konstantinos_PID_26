@@ -29,9 +29,9 @@ xyplot(resp2 ~ values | ind, data=df, type=c('g', 'p'), pch=19, cex=0.6,
 
 ### check for overlap and balance
 cn = colnames(dfData)[-c(5,6)]
-f = dfData$hospital_outcome
+f = dfData$outcome_28d
 
-pdf('temp/overlaps.pdf')
+pdf('temp/overlaps_28d.pdf')
 par(mfrow=c(2,2))
 for (i in seq_along(cn)){
   x = as.numeric(dfData[,cn[i]])
@@ -255,9 +255,73 @@ xyplot(ivPredict ~ fGroups, xlab='Actual Group',
 i = which(ivPredict < 0.5 & dfData$fGroups == 'DIED')
 ivOutliers = i
 
+##############################
+### due to presence of outliers try the model with a guess parameter
+dfData = data.frame(lData.train$data)
+dim(dfData)
+dfData$fGroups = lData.train$covariates$hospital_outcome
+rm(fGroups)
+levels(dfData$fGroups)
+dfData$sex = as.numeric(dfData$sex)-1
+lData = list(resp=ifelse(dfData$fGroups == 'DIED', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
+
+stanDso = rstan::stan_model(file='binomialGuessMixtureRegressionSharedCoeffVariance.stan')
+
+lStanData = list(Ntotal=length(lData$resp), Ncol=ncol(lData$mModMatrix), X=lData$mModMatrix,
+                 y=lData$resp)
+
+# ## give initial values
+# initf = function(chain_id = 1) {
+#   list(betas=rep(0, times=ncol(lStanData$X)), tau=0.5)
+# }
 
 
+fit.stan.3 = sampling(stanDso, data=lStanData, iter=2000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4,# init=initf,
+                    control=list(adapt_delta=0.99, max_treedepth = 13))
 
+#save(fit.stan, file='temp/fit.stan.binom_guess.rds')
+
+print(fit.stan.3, c('betas2', 'tau'))
+print(fit.stan.3, 'tau')
+traceplot(fit.stan.3, 'tau')
+
+## get the coefficient of interest
+mCoef = extract(fit.stan.3)$betas2
+dim(mCoef)
+## get the intercept
+iIntercept = mCoef[,1]
+mCoef = mCoef[,-1]
+colnames(mCoef) = colnames(lData$mModMatrix)[2:ncol(lData$mModMatrix)]
+
+## coeftab object 
+ct.1 = coeftab(fit.stan.3)
+rn = rownames(ct.1@coefs)
+i = grep('betas', rn)
+rownames(ct.1@coefs)[i[-1]] = colnames(mCoef)
+rownames(ct.1@se)[i[-1]] = colnames(mCoef)
+plot(ct.1, pars=colnames(mCoef))
+
+compare(fit.stan, fit.stan.2, fit.stan.3)
+plot(compare(fit.stan, fit.stan.2, fit.stan.3))
+
+mCoef = extract(fit.stan.3)$betas2
+dim(mCoef)
+colnames(mCoef) = c('Intercept', colnames(lData$mModMatrix)[2:ncol(lData$mModMatrix)])
+library(lattice)
+## get the predicted values
+## create model matrix
+X = as.matrix(cbind(rep(1, times=nrow(dfData)), dfData[,colnames(mCoef)[-1]]))
+colnames(X) = colnames(mCoef)
+head(X)
+ivPredict = plogis(mypred(colMeans(mCoef), list(mModMatrix=X))[,1])
+xyplot(ivPredict ~ fGroups, xlab='Actual Group', 
+       ylab='Predicted Probability of Died',
+       data=dfData)
+# outlier samples
+i = which(ivPredict < 0.5 & dfData$fGroups == 'DIED')
+p = rep('ALIVE', times=length(dfData$fGroups))
+p[ivPredict > 0.5] = 'DIED'
+table(dfData$fGroups, p)
 # ## top variables according to random forest and binomial models
 # dfRF = CVariableSelection.RandomForest.getVariables(oVar.r)
 # # select the top 30 variables
