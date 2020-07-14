@@ -1,21 +1,25 @@
 # File: 01_EDA.R
 # Auth: umar.niazi@kcl.ac.uk
-# DESC: EDA and some univariate analysis of the lite data
-# Date: 7/7/2020
+# DESC: EDA and some analysis of the merged data (clinical and miRNA) at t1
+# Date: 13/7/2020
 
 
 source('header.R')
 
-dfData = read.csv('dataExternal/gstt_raw_clinical_data_v2_lite.csv', header=T,
+dfData = read.csv('dataExternal/merged_gstt_t1.csv', header=T,
                   stringsAsFactors = T)
 colnames(dfData)
+dfData = dfData[,-c(1:12,16, 62:75, 77)]
+colnames(dfData)
+dfData$sex = as.numeric(dfData$sex)-1
+summary(dfData)
 df = dfData[,-c(5,6)]
 df = stack(df)
 dim(dfData)
 length(unique(df$ind))
 library(lattice)
 df$resp = dfData$hospital_outcome
-df$resp2 = dfData$outcome_28d
+df$resp2 = dfData$day28_outcome
 
 xyplot(resp ~ values | ind, data=df, type=c('g', 'p'), pch=19, cex=0.6,
        par.strip.text=list(cex=0.7), 
@@ -29,9 +33,9 @@ xyplot(resp2 ~ values | ind, data=df, type=c('g', 'p'), pch=19, cex=0.6,
 
 ### check for overlap and balance
 cn = colnames(dfData)[-c(5,6)]
-f = dfData$outcome_28d
+f = dfData$day28_outcome
 
-pdf('temp/overlaps_28d.pdf')
+pdf('temp/overlaps_d28.pdf')
 par(mfrow=c(2,2))
 for (i in seq_along(cn)){
   x = as.numeric(dfData[,cn[i]])
@@ -54,9 +58,9 @@ unlink('CCrossValidation.R')
 
 ## prepare data to use in the analysis
 dfData.bk = dfData
-# drop one of the age variables repeated twice in input sheet
-grep('age', colnames(dfData))
-dfData = dfData[,-18]
+# # drop one of the age variables repeated twice in input sheet
+# grep('age', colnames(dfData))
+# dfData = dfData[,-18]
 
 x = rep(NA, length=ncol(dfData))
 for(i in 1:ncol(dfData)){
@@ -67,6 +71,16 @@ data.frame(colnames(dfData), x)
 which(x > 10)
 dfData = dfData[,-c(40, 45, 46)]
 table(complete.cases(dfData))
+
+x = rep(NA, length=ncol(dfData))
+for(i in 1:ncol(dfData)){
+  x[i] = sum(is.na(dfData[,i]))
+}
+# remove variables with large NAs
+data.frame(colnames(dfData), x)
+x = which(x > 2)
+cn = colnames(dfData)[x]
+dfData = dfData[,-x]
 
 x = rep(NA, length=ncol(dfData))
 for(i in 1:ncol(dfData)){
@@ -90,8 +104,9 @@ s = which(s == 0)
 
 lData.train = list(data=dfData[,-c(5,6, s)], covariates=dfData[,c(5,6)])
 
+colnames(lData.train$data)
 ## drop certain variables
-i = grep('days_ad', colnames(lData.train$data))
+i = grep('days_ad|days_symp2', colnames(lData.train$data))
 lData.train$data = lData.train$data[,-i]
 ########################## perform a random forest step
 dfData = lData.train$data
@@ -107,7 +122,7 @@ dim(dfData)
 dfData$fGroups = lData.train$covariates$hospital_outcome
 rm(fGroups)
 levels(dfData$fGroups)
-dfData$sex = as.numeric(dfData$sex)-1
+#dfData$sex = as.numeric(dfData$sex)-1
 lData = list(resp=ifelse(dfData$fGroups == 'DIED', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
 
 library(rethinking)
@@ -151,11 +166,19 @@ rownames(ct.1@coefs)[i[-1]] = colnames(mCoef)
 rownames(ct.1@se)[i[-1]] = colnames(mCoef)
 plot(ct.1, pars=colnames(mCoef))
 
+m = abs(colMeans(mCoef))
+m = sort(m, decreasing = T)
+
+l2 = barplot(m, 
+             las=2, xaxt='n', col='grey', main='Top Variables')
+axis(1, at = l2, labels = names(m), tick = F, las=2, cex.axis=0.7 )
+
+
 # ## find correlated variables
 dim(dfData)
-mData = as.matrix(dfData[,-36])
+mData = as.matrix(dfData[,-16])
 length(as.vector(mData))
-mCor = cor((mData+runif(2170, 1e-4, 1e-3)), use="na.or.complete")
+mCor = cor((mData+runif(930, 1e-4, 1e-3)), use="na.or.complete")
 library(caret)
 ### find the columns that are correlated and should be removed
 n = findCorrelation((mCor), cutoff = 0.8, names=T)
@@ -173,12 +196,20 @@ n = c(n[1,], n[2,])
 pairs(mCoef[sample(1:nrow(mCoef), 500),n], col='grey', cex=0.5)
 
 ## to drop
-i = c(grep('Creat', colnames(lData.train$data)),
-      grep('haema', colnames(lData.train$data)),
-      grep('Physio', colnames(lData.train$data)),
-      grep('WCC|chronic_h|age_sc', colnames(lData.train$data)))
+i = c(grep('APACHEii_total|WCC_total|Urea', colnames(lData.train$data)),
+      grep('age_years', colnames(lData.train$data)))
+      # grep('Physio', colnames(lData.train$data)),
+      # grep('WCC|age_sc|miR.451a.5p|miR.192.5p', colnames(lData.train$data)))
 colnames(lData.train$data[,i])
 lData.train$data = lData.train$data[,-i]
+
+########################## perform a second random forest step
+dfData = lData.train$data
+fGroups = lData.train$covariates$hospital_outcome
+
+oVar.r = CVariableSelection.RandomForest(dfData, fGroups, boot.num = 100)
+
+plot.var.selection(oVar.r)
 
 ######### second stan model with a smaller number of variables
 dfData = data.frame(lData.train$data)
@@ -186,7 +217,7 @@ dim(dfData)
 dfData$fGroups = lData.train$covariates$hospital_outcome
 rm(fGroups)
 levels(dfData$fGroups)
-dfData$sex = as.numeric(dfData$sex)-1
+#dfData$sex = as.numeric(dfData$sex)-1
 lData = list(resp=ifelse(dfData$fGroups == 'DIED', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
 
 lStanData = list(Ntotal=length(lData$resp), Ncol=ncol(lData$mModMatrix), X=lData$mModMatrix,
@@ -262,7 +293,7 @@ dim(dfData)
 dfData$fGroups = lData.train$covariates$hospital_outcome
 rm(fGroups)
 levels(dfData$fGroups)
-dfData$sex = as.numeric(dfData$sex)-1
+#dfData$sex = as.numeric(dfData$sex)-1
 lData = list(resp=ifelse(dfData$fGroups == 'DIED', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
 
 stanDso = rstan::stan_model(file='binomialGuessMixtureRegressionSharedCoeffVariance.stan')
@@ -302,7 +333,7 @@ rownames(ct.1@se)[i[-1]] = colnames(mCoef)
 plot(ct.1, pars=colnames(mCoef))
 
 compare(fit.stan, fit.stan.2, fit.stan.3)
-plot(compare(fit.stan, fit.stan.2, fit.stan.3))
+plot(compare(fit.stan.2, fit.stan.3))
 
 mCoef = extract(fit.stan.3)$betas2
 dim(mCoef)
