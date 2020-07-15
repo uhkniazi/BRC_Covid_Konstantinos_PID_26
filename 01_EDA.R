@@ -120,6 +120,11 @@ plot.var.selection(oVar.r)
 dfData = data.frame(lData.train$data)
 dim(dfData)
 dfData$fGroups = lData.train$covariates$hospital_outcome
+table(dfData$fGroups)
+i = which(dfData$fGroups == 'DIED')
+i2 = which(dfData$fGroups == 'ALIVE')
+i2 = sample(i2, 18)
+dfData = dfData[c(i, i2),]
 rm(fGroups)
 levels(dfData$fGroups)
 #dfData$sex = as.numeric(dfData$sex)-1
@@ -176,19 +181,19 @@ axis(1, at = l2, labels = names(m), tick = F, las=2, cex.axis=0.7 )
 
 # ## find correlated variables
 dim(dfData)
-mData = as.matrix(dfData[,-16])
+mData = as.matrix(dfData[,-23])
 length(as.vector(mData))
-mCor = cor((mData+runif(930, 1e-4, 1e-3)), use="na.or.complete")
+mCor = cor((mData+runif(1364, 1e-4, 1e-3)), use="na.or.complete")
 library(caret)
 ### find the columns that are correlated and should be removed
-n = findCorrelation((mCor), cutoff = 0.8, names=T)
+n = findCorrelation((mCor), cutoff = 0.7, names=T)
 data.frame(n)
 sapply(n, function(x) {
-  (abs(mCor[,x]) >= 0.8)
+  (abs(mCor[,x]) >= 0.7)
 })
 
 n = sapply(n, function(x) {
-  rownames(mCor)[(abs(mCor[,x]) >= 0.8)]
+  rownames(mCor)[(abs(mCor[,x]) >= 0.7)]
 })
 
 n = c(n[1,], n[2,])
@@ -196,8 +201,8 @@ n = c(n[1,], n[2,])
 pairs(mCoef[sample(1:nrow(mCoef), 500),n], col='grey', cex=0.5)
 
 ## to drop
-i = c(grep('APACHEii_total|WCC_total|Urea', colnames(lData.train$data)),
-      grep('age_years', colnames(lData.train$data)))
+i = c(grep('APACHEii_total', colnames(lData.train$data)),
+      grep('age_score', colnames(lData.train$data)))
       # grep('Physio', colnames(lData.train$data)),
       # grep('WCC|age_sc|miR.451a.5p|miR.192.5p', colnames(lData.train$data)))
 colnames(lData.train$data[,i])
@@ -217,6 +222,15 @@ dim(dfData)
 dfData$fGroups = lData.train$covariates$hospital_outcome
 rm(fGroups)
 levels(dfData$fGroups)
+
+table(dfData$fGroups)
+i = which(dfData$fGroups == 'DIED')
+i2 = which(dfData$fGroups == 'ALIVE')
+i = sample(i, 10)
+i2 = sample(i2, 10)
+dfData = dfData[c(i, i2),]
+levels(dfData$fGroups)
+
 #dfData$sex = as.numeric(dfData$sex)-1
 lData = list(resp=ifelse(dfData$fGroups == 'DIED', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
 
@@ -252,8 +266,16 @@ rownames(ct.1@coefs)[i[-1]] = colnames(mCoef)
 rownames(ct.1@se)[i[-1]] = colnames(mCoef)
 plot(ct.1, pars=colnames(mCoef))
 
-compare(fit.stan, fit.stan.2)
-plot(compare(fit.stan, fit.stan.2))
+m = abs(colMeans(mCoef))
+m = sort(m, decreasing = T)
+
+l2 = barplot(m, 
+             las=2, xaxt='n', col='grey', main='Top Variables')
+axis(1, at = l2, labels = names(m), tick = F, las=2, cex.axis=0.7 )
+
+
+# compare(fit.stan, fit.stan.2)
+# plot(compare(fit.stan, fit.stan.2))
 
 ### predictive performance of the model
 ## binomial prediction
@@ -293,6 +315,15 @@ dim(dfData)
 dfData$fGroups = lData.train$covariates$hospital_outcome
 rm(fGroups)
 levels(dfData$fGroups)
+
+table(dfData$fGroups)
+i = which(dfData$fGroups == 'DIED')
+i2 = which(dfData$fGroups == 'ALIVE')
+i = sample(i, 10)
+i2 = sample(i2, 10)
+dfData = dfData[c(i, i2),]
+table(dfData$fGroups)
+
 #dfData$sex = as.numeric(dfData$sex)-1
 lData = list(resp=ifelse(dfData$fGroups == 'DIED', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
 
@@ -341,6 +372,10 @@ colnames(mCoef) = c('Intercept', colnames(lData$mModMatrix)[2:ncol(lData$mModMat
 library(lattice)
 ## get the predicted values
 ## create model matrix
+dfData = data.frame(lData.train$data)
+dim(dfData)
+dfData$fGroups = lData.train$covariates$hospital_outcome
+
 X = as.matrix(cbind(rep(1, times=nrow(dfData)), dfData[,colnames(mCoef)[-1]]))
 colnames(X) = colnames(mCoef)
 head(X)
