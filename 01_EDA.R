@@ -1,45 +1,40 @@
 # File: 01_EDA.R
 # Auth: umar.niazi@kcl.ac.uk
-# DESC: EDA and some analysis of the merged data (clinical and miRNA) at t1
-# Date: 13/7/2020
+# DESC: EDA and some analysis of the merged data gstt and kch (clinical)
+# Date: 15/7/2020
 
 
 source('header.R')
 
-dfData = read.csv('dataExternal/merged_gstt_t1.csv', header=T,
+dfData = read.csv('dataExternal/combined_dataset_covid_predictive_analytics.csv', header=T,
                   stringsAsFactors = T)
 colnames(dfData)
-dfData = dfData[,-c(1:12,16, 62:75, 77)]
+dfData = dfData[,-c(1)]
 colnames(dfData)
-dfData$sex = as.numeric(dfData$sex)-1
+str(dfData)
 summary(dfData)
-df = dfData[,-c(5,6)]
+dfData$outcome_28d = factor(dfData$outcome_28d)
+df = dfData[,-c(31)]
 df = stack(df)
 dim(dfData)
 length(unique(df$ind))
 library(lattice)
-df$resp = dfData$hospital_outcome
-df$resp2 = dfData$day28_outcome
+df$resp = dfData$outcome_28d
 
 xyplot(resp ~ values | ind, data=df, type=c('g', 'p'), pch=19, cex=0.6,
-       par.strip.text=list(cex=0.7), 
-       scales = list(x=list(rot=45, cex=0.4), relation='free'),
-       ylab='Hospital Outcome')
-
-xyplot(resp2 ~ values | ind, data=df, type=c('g', 'p'), pch=19, cex=0.6,
        par.strip.text=list(cex=0.7), 
        scales = list(x=list(rot=45, cex=0.4), relation='free'),
        ylab='28 Day outcome')
 
 ### check for overlap and balance
-cn = colnames(dfData)[-c(5,6)]
-f = dfData$day28_outcome
+cn = colnames(dfData)[-c(31)]
+f = dfData$outcome_28d
 
 pdf('temp/overlaps_d28.pdf')
 par(mfrow=c(2,2))
 for (i in seq_along(cn)){
   x = as.numeric(dfData[,cn[i]])
-  hist2(x[f == 'ALIVE'], x[f=='DIED'], main=cn[i], legends=c('A', 'D'))
+  hist2(x[f == '0'], x[f=='1'], main=cn[i], legends=c('A', 'D'))
 }
 dev.off(dev.cur())
 ################################################
@@ -58,29 +53,19 @@ unlink('CCrossValidation.R')
 
 ## prepare data to use in the analysis
 dfData.bk = dfData
-# # drop one of the age variables repeated twice in input sheet
-# grep('age', colnames(dfData))
-# dfData = dfData[,-18]
 
-x = rep(NA, length=ncol(dfData))
-for(i in 1:ncol(dfData)){
-  x[i] = sum(is.na(dfData[,i]))
-}
-# remove variables with large NAs
-data.frame(colnames(dfData), x)
-which(x > 10)
-dfData = dfData[,-c(40, 45, 46)]
 table(complete.cases(dfData))
-
 x = rep(NA, length=ncol(dfData))
 for(i in 1:ncol(dfData)){
   x[i] = sum(is.na(dfData[,i]))
 }
 # remove variables with large NAs
 data.frame(colnames(dfData), x)
-x = which(x > 2)
-cn = colnames(dfData)[x]
-dfData = dfData[,-x]
+i = which(x > 2)
+tapply(dfData[,'Urea'], dfData$outcome_28d, function(x) sum(is.na(x)))
+
+dfData = dfData[,-c(i)]
+table(complete.cases(dfData))
 
 x = rep(NA, length=ncol(dfData))
 for(i in 1:ncol(dfData)){
@@ -97,20 +82,19 @@ for(i in 1:length(cn)){
   dfData[,cn[i]] = impute(dfData[,cn[i]], mean)
 }
 colnames(dfData)
+cvImputed = cn
 
 ## remove variables with 0 sd i.e. not changing 
 s = apply(dfData, 2, sd)
 s = which(s == 0)
 
-lData.train = list(data=dfData[,-c(5,6, s)], covariates=dfData[,c(5,6)])
+as.data.frame(colnames(dfData))
+lData.train = list(data=dfData[,-c(19, 20)], covariates=dfData[,c(19, 20)])
 
 colnames(lData.train$data)
-## drop certain variables
-i = grep('days_ad|days_symp2', colnames(lData.train$data))
-lData.train$data = lData.train$data[,-i]
 ########################## perform a random forest step
 dfData = lData.train$data
-fGroups = lData.train$covariates$hospital_outcome
+fGroups = lData.train$covariates$outcome_28d
 
 oVar.r = CVariableSelection.RandomForest(dfData, fGroups, boot.num = 100)
 
@@ -119,16 +103,12 @@ plot.var.selection(oVar.r)
 ######################## Stan section for binomial regression approach
 dfData = data.frame(lData.train$data)
 dim(dfData)
-dfData$fGroups = lData.train$covariates$hospital_outcome
+dfData$fGroups = lData.train$covariates$outcome_28d
 table(dfData$fGroups)
-i = which(dfData$fGroups == 'DIED')
-i2 = which(dfData$fGroups == 'ALIVE')
-i2 = sample(i2, 18)
-dfData = dfData[c(i, i2),]
 rm(fGroups)
 levels(dfData$fGroups)
 #dfData$sex = as.numeric(dfData$sex)-1
-lData = list(resp=ifelse(dfData$fGroups == 'DIED', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
+lData = list(resp=ifelse(dfData$fGroups == '1', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
 
 library(rethinking)
 library(rstan)
@@ -146,7 +126,7 @@ lStanData = list(Ntotal=length(lData$resp), Ncol=ncol(lData$mModMatrix), X=lData
 # }
 
 
-fit.stan = sampling(stanDso, data=lStanData, iter=2000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4,# init=initf,
+fit.stan = sampling(stanDso, data=lStanData, iter=4000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4,# init=initf,
                     control=list(adapt_delta=0.99, max_treedepth = 13))
 
 #save(fit.stan, file='temp/fit.stan.binom_guess.rds')
@@ -178,39 +158,73 @@ l2 = barplot(m,
              las=2, xaxt='n', col='grey', main='Top Variables')
 axis(1, at = l2, labels = names(m), tick = F, las=2, cex.axis=0.7 )
 
+### predictive performance of the model
+## binomial prediction
+mypred = function(theta, data){
+  betas = theta # vector of betas i.e. regression coefficients for population
+  ## data
+  mModMatrix = data$mModMatrix
+  # calculate fitted value
+  iFitted = mModMatrix %*% betas
+  # using logit link so use inverse logit
+  #iFitted = plogis(iFitted)
+  return(iFitted)
+}
+
+
+mCoef = extract(fit.stan)$betas2
+dim(mCoef)
+colnames(mCoef) = c('Intercept', colnames(lData$mModMatrix)[2:ncol(lData$mModMatrix)])
+library(lattice)
+## get the predicted values
+## create model matrix
+X = as.matrix(cbind(rep(1, times=nrow(dfData)), dfData[,colnames(mCoef)[-1]]))
+colnames(X) = colnames(mCoef)
+head(X)
+ivPredict = plogis(mypred(colMeans(mCoef), list(mModMatrix=X))[,1])
+xyplot(ivPredict ~ fGroups, xlab='Actual Group', 
+       ylab='Predicted Probability of Died',
+       data=dfData)
+
 
 # ## find correlated variables
 dim(dfData)
-mData = as.matrix(dfData[,-23])
+mData = as.matrix(dfData[,-19])
 length(as.vector(mData))
-mCor = cor((mData+runif(1364, 1e-4, 1e-3)), use="na.or.complete")
+mCor = cor((mData+runif(1275, 1e-4, 1e-3)), use="na.or.complete")
 library(caret)
+image(mCor)
 ### find the columns that are correlated and should be removed
 n = findCorrelation((mCor), cutoff = 0.7, names=T)
 data.frame(n)
-sapply(n, function(x) {
-  (abs(mCor[,x]) >= 0.7)
-})
+# sapply(n, function(x) {
+#   (abs(mCor[,x]) >= 0.7)
+# })
+# 
+# n = sapply(n, function(x) {
+#   rownames(mCor)[(abs(mCor[,x]) >= 0.7)]
+# })
+# 
+# n = c(n[1,], n[2,])
+# 
+# pairs(mCoef[sample(1:nrow(mCoef), 500),n], col='grey', cex=0.5)
+# 
+# ## to drop
+# i = c(grep('Age_score', colnames(lData.train$data)))
+#       # grep('age_score', colnames(lData.train$data)))
+#       # grep('Physio', colnames(lData.train$data)),
+#       # grep('WCC|age_sc|miR.451a.5p|miR.192.5p', colnames(lData.train$data)))
+# colnames(lData.train$data[,i])
+# lData.train$data = lData.train$data[,-i]
 
-n = sapply(n, function(x) {
-  rownames(mCor)[(abs(mCor[,x]) >= 0.7)]
-})
+cvTopVariables.rf = rownames(CVariableSelection.RandomForest.getVariables(oVar.r))[1:6]
+cvTopVariables.bin = names(m)[1:8]
+cvTopVariables = unique(c(cvTopVariables.rf, cvTopVariables.bin))
 
-n = c(n[1,], n[2,])
-
-pairs(mCoef[sample(1:nrow(mCoef), 500),n], col='grey', cex=0.5)
-
-## to drop
-i = c(grep('APACHEii_total', colnames(lData.train$data)),
-      grep('age_score', colnames(lData.train$data)))
-      # grep('Physio', colnames(lData.train$data)),
-      # grep('WCC|age_sc|miR.451a.5p|miR.192.5p', colnames(lData.train$data)))
-colnames(lData.train$data[,i])
-lData.train$data = lData.train$data[,-i]
-
+lData.train$data = lData.train$data[,cvTopVariables]
 ########################## perform a second random forest step
 dfData = lData.train$data
-fGroups = lData.train$covariates$hospital_outcome
+fGroups = lData.train$covariates$outcome_28d
 
 oVar.r = CVariableSelection.RandomForest(dfData, fGroups, boot.num = 100)
 
@@ -219,37 +233,37 @@ plot.var.selection(oVar.r)
 ######### second stan model with a smaller number of variables
 dfData = data.frame(lData.train$data)
 dim(dfData)
-dfData$fGroups = lData.train$covariates$hospital_outcome
+dfData$fGroups = lData.train$covariates$outcome_28d
 rm(fGroups)
 levels(dfData$fGroups)
 
 table(dfData$fGroups)
-i = which(dfData$fGroups == 'DIED')
-i2 = which(dfData$fGroups == 'ALIVE')
-i = sample(i, 10)
-i2 = sample(i2, 10)
-dfData = dfData[c(i, i2),]
+# i = which(dfData$fGroups == 'DIED')
+# i2 = which(dfData$fGroups == 'ALIVE')
+# i = sample(i, 10)
+# i2 = sample(i2, 10)
+# dfData = dfData[c(i, i2),]
 levels(dfData$fGroups)
 
-#dfData$sex = as.numeric(dfData$sex)-1
-lData = list(resp=ifelse(dfData$fGroups == 'DIED', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
+lData = list(resp=ifelse(dfData$fGroups == '1', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
 
 lStanData = list(Ntotal=length(lData$resp), Ncol=ncol(lData$mModMatrix), X=lData$mModMatrix,
                  y=lData$resp)
+stanDso = rstan::stan_model(file='binomialRegressionSharedCoeffVariance.stan')
 
-# ## give initial values
-# initf = function(chain_id = 1) {
-#   list(betas=rep(0, times=ncol(lStanData$X)), tau=0.5)
-# }
+## give initial values
+initf = function(chain_id = 1) {
+  list(betas=rep(0, times=ncol(lStanData$X)), tau=0.5)
+}
 
 
-fit.stan.2 = sampling(stanDso, data=lStanData, iter=2000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4,# init=initf,
+fit.stan.2 = sampling(stanDso, data=lStanData, iter=4000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4, init=initf,
                     control=list(adapt_delta=0.99, max_treedepth = 13))
 
 #save(fit.stan, file='temp/fit.stan.binom_guess.rds')
 
 print(fit.stan.2, c('betas2', 'tau'))
-
+traceplot(fit.stan.2, 'tau')
 ## get the coefficient of interest
 mCoef = extract(fit.stan.2)$betas2
 dim(mCoef)
@@ -304,41 +318,53 @@ ivPredict = plogis(mypred(colMeans(mCoef), list(mModMatrix=X))[,1])
 xyplot(ivPredict ~ fGroups, xlab='Actual Group', 
        ylab='Predicted Probability of Died',
        data=dfData)
-# outlier samples
-i = which(ivPredict < 0.5 & dfData$fGroups == 'DIED')
-ivOutliers = i
+
+
+## draw a ROC curve first for calibration performance test
+ivTruth = dfData$fGroups == '1'
+p = prediction(ivPredict, ivTruth)
+perf.alive = performance(p, 'tpr', 'fpr')
+dfPerf.alive = data.frame(c=perf.alive@alpha.values, t=perf.alive@y.values[[1]], f=perf.alive@x.values[[1]], 
+                          r=perf.alive@y.values[[1]]/perf.alive@x.values[[1]])
+colnames(dfPerf.alive) = c('c', 't', 'f', 'r')
+plot(perf.alive)
+
+cPredict = rep('1', times=length(ivPredict))
+cPredict[ivPredict < 0.2] = '0'
+table(dfData$fGroups, cPredict)
+
 
 ##############################
 ### due to presence of outliers try the model with a guess parameter
 dfData = data.frame(lData.train$data)
 dim(dfData)
-dfData$fGroups = lData.train$covariates$hospital_outcome
+dfData$fGroups = lData.train$covariates$outcome_28d
 rm(fGroups)
 levels(dfData$fGroups)
 
 table(dfData$fGroups)
-i = which(dfData$fGroups == 'DIED')
-i2 = which(dfData$fGroups == 'ALIVE')
-i = sample(i, 10)
-i2 = sample(i2, 10)
-dfData = dfData[c(i, i2),]
-table(dfData$fGroups)
+# i = which(dfData$fGroups == 'DIED')
+# i2 = which(dfData$fGroups == 'ALIVE')
+# i = sample(i, 10)
+# i2 = sample(i2, 10)
+# dfData = dfData[c(i, i2),]
+# table(dfData$fGroups)
 
 #dfData$sex = as.numeric(dfData$sex)-1
-lData = list(resp=ifelse(dfData$fGroups == 'DIED', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
+lData = list(resp=ifelse(dfData$fGroups == '1', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
 
 stanDso = rstan::stan_model(file='binomialGuessMixtureRegressionSharedCoeffVariance.stan')
 
 lStanData = list(Ntotal=length(lData$resp), Ncol=ncol(lData$mModMatrix), X=lData$mModMatrix,
                  y=lData$resp)
 
-# ## give initial values
-# initf = function(chain_id = 1) {
-#   list(betas=rep(0, times=ncol(lStanData$X)), tau=0.5)
-# }
+## give initial values
+initf = function(chain_id = 1) {
+  list(betas=rep(0, times=ncol(lStanData$X)), tau=0.5)
+}
 
 
-fit.stan.3 = sampling(stanDso, data=lStanData, iter=2000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4,# init=initf,
+fit.stan.3 = sampling(stanDso, data=lStanData, iter=4000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4, init=initf,
                     control=list(adapt_delta=0.99, max_treedepth = 13))
 
 #save(fit.stan, file='temp/fit.stan.binom_guess.rds')
@@ -364,7 +390,7 @@ rownames(ct.1@se)[i[-1]] = colnames(mCoef)
 plot(ct.1, pars=colnames(mCoef))
 
 compare(fit.stan, fit.stan.2, fit.stan.3)
-plot(compare(fit.stan.2, fit.stan.3))
+plot(compare(fit.stan, fit.stan.2, fit.stan.3))
 
 mCoef = extract(fit.stan.3)$betas2
 dim(mCoef)
@@ -374,7 +400,7 @@ library(lattice)
 ## create model matrix
 dfData = data.frame(lData.train$data)
 dim(dfData)
-dfData$fGroups = lData.train$covariates$hospital_outcome
+dfData$fGroups = lData.train$covariates$outcome_28d
 
 X = as.matrix(cbind(rep(1, times=nrow(dfData)), dfData[,colnames(mCoef)[-1]]))
 colnames(X) = colnames(mCoef)
@@ -383,35 +409,102 @@ ivPredict = plogis(mypred(colMeans(mCoef), list(mModMatrix=X))[,1])
 xyplot(ivPredict ~ fGroups, xlab='Actual Group', 
        ylab='Predicted Probability of Died',
        data=dfData)
-# outlier samples
-i = which(ivPredict < 0.5 & dfData$fGroups == 'DIED')
-p = rep('ALIVE', times=length(dfData$fGroups))
-p[ivPredict > 0.5] = 'DIED'
-table(dfData$fGroups, p)
-# ## top variables according to random forest and binomial models
-# dfRF = CVariableSelection.RandomForest.getVariables(oVar.r)
-# # select the top 30 variables
-# cvTopVars = rownames(dfRF)[1:20]
-# cvTopVars = cvTopVars[!cvTopVars %in% i]
-# # top from binomial model
-# m = colMeans(mCoef)
-# m = abs(m)
-# m = sort(m, decreasing = T)
-# cvTopVars.binomial = names(m)[1:20] #names(m[m > 0.25])
-# cvTopVars.binomial = cvTopVars.binomial[!cvTopVars.binomial %in% i]
-# dfData = lData.train$data
-# fGroups = lData.train$covariates$hospital_outcome
-# dim(dfData)
-# 
-# oVar.sub = CVariableSelection.ReduceModel(dfData[,cvTopVars.binomial], fGroups, boot.num = 100)
-# 
-# # plot the number of variables vs average error rate
-# plot.var.selection(oVar.sub)
-# 
-# # use the top 30 genes to find top combinations of genes
-# dfData = data.frame(t(lData.train$data[cvTopGenes.binomial, ]))
-# 
-# oVar.sub2 = CVariableSelection.ReduceModel(dfData, fGroups, boot.num = 100)
-# 
-# # plot the number of variables vs average error rate
-# plot.var.selection(oVar.sub2)
+# # outlier samples
+# i = which(ivPredict < 0.5 & dfData$fGroups == 'DIED')
+# p = rep('ALIVE', times=length(dfData$fGroups))
+# p[ivPredict > 0.5] = 'DIED'
+# table(dfData$fGroups, p)
+
+############################################################################
+######## addressing imbalance
+############################################################################
+stanDso = rstan::stan_model(file='binomialRegressionSharedCoeffVariance.stan')
+
+dfData = data.frame(lData.train$data)
+dim(dfData)
+dfData$fGroups = lData.train$covariates$outcome_28d
+rm(fGroups)
+levels(dfData$fGroups)
+
+table(dfData$fGroups)
+
+lFits = vector(mode = 'list', length=10)
+for(b in 1:10){
+  dfData = data.frame(lData.train$data)
+  dfData$fGroups = lData.train$covariates$outcome_28d
+  i = which(dfData$fGroups == '1')
+  i2 = which(dfData$fGroups == '0')
+  i = sample(i, 15)
+  i2 = sample(i2, 30)
+  dfData = dfData[c(i, i2),]
+  
+  
+  lData = list(resp=ifelse(dfData$fGroups == '1', 1, 0), mModMatrix=model.matrix(fGroups ~ 1 + ., data=dfData))
+  
+  lStanData = list(Ntotal=length(lData$resp), Ncol=ncol(lData$mModMatrix), X=lData$mModMatrix,
+                   y=lData$resp)
+  
+  lFits[[b]] = sampling(stanDso, data=lStanData, iter=1000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4, init=initf,
+                        control=list(adapt_delta=0.99, max_treedepth = 13))
+  
+  ## get the coefficient of interest
+  mCoef = extract(lFits[[b]])$betas2
+  dim(mCoef)
+  ## get the intercept
+  iIntercept = mCoef[,1]
+  mCoef = mCoef[,-1]
+  colnames(mCoef) = colnames(lData$mModMatrix)[2:ncol(lData$mModMatrix)]
+  
+  ## coeftab object 
+  ct.1 = coeftab(lFits[[b]])
+  rn = rownames(ct.1@coefs)
+  i = grep('betas', rn)
+  rownames(ct.1@coefs)[i[-1]] = colnames(mCoef)
+  rownames(ct.1@se)[i[-1]] = colnames(mCoef)
+  plot(ct.1, pars=colnames(mCoef))
+}
+
+ct.1 = coeftab(lFits[[1]], lFits[[2]], lFits[[3]], 
+               lFits[[4]], lFits[[5]], lFits[[6]],
+               lFits[[7]], lFits[[8]], lFits[[9]],
+               lFits[[10]])
+rn = rownames(ct.1@coefs)
+i = grep('betas', rn)
+rownames(ct.1@coefs)[i[-1]] = colnames(mCoef)
+rownames(ct.1@se)[i[-1]] = colnames(mCoef)
+plot(ct.1, pars=c(colnames(mCoef)))
+
+## select variables to drop
+# drop some variables that show consistent zero coefficients under 
+# sub-sampling - see the loop above where this was done to select
+# the variables after fitting multiple sub-sampled models
+i = grep('Crea|Fi|BM', cvTopVariables)
+cvTopVariables[i]
+cvTopVariables = cvTopVariables[-i]
+
+dfData = lData.train$data
+fGroups = lData.train$covariates$outcome_28d
+dim(dfData)
+
+oVar.sub = CVariableSelection.ReduceModel(dfData, fGroups, boot.num = 100)
+
+# plot the number of variables vs average error rate
+plot.var.selection(oVar.sub)
+
+cvVar = CVariableSelection.ReduceModel.getMinModel(oVar.sub, size = 4)
+
+
+oCV.lda = CCrossValidation.LDA(dfData[,cvVar], dfData[,cvVar], fGroups, fGroups, level.predict = '1',
+                               boot.num = 100, k.fold = 10) 
+
+plot.cv.performance(oCV.lda)
+
+url = 'https://raw.githubusercontent.com/uhkniazi/CCrossValidation/experimental/bernoulli.stan'
+download(url, 'bernoulli.stan')
+
+oCV.s = CCrossValidation.StanBern(dfData[,cvVar], dfData[,cvVar], fGroups, fGroups, level.predict = '1',
+                                  boot.num = 30, k.fold = 10, ncores = 2, nchains = 2) 
+
+save(oCV.s, file='temp/oCV.stan.rds')
+
+plot.cv.performance(oCV.s)
