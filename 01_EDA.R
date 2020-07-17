@@ -37,6 +37,15 @@ for (i in seq_along(cn)){
   hist2(x[f == '0'], x[f=='1'], main=cn[i], legends=c('A', 'D'))
 }
 dev.off(dev.cur())
+
+xyplot(outcome_28d ~ Age, groups=Viremia, data=dfData, type=c('g', 'r', 'p'),
+       auto.key=T)
+
+xyplot(outcome_28d ~ FiO2, groups=Viremia, data=dfData, type=c('g', 'smooth', 'p'),
+       auto.key=T)
+
+
+
 ################################################
 ### some quick variable selection and model fitting
 ### for prediction purposes
@@ -92,6 +101,21 @@ as.data.frame(colnames(dfData))
 lData.train = list(data=dfData[,-c(19, 20)], covariates=dfData[,c(19, 20)])
 
 colnames(lData.train$data)
+
+cn = colnames(dfData)[-c(2, 4, 12, 18:20)]
+
+pdf('temp/xyplots.pdf')
+for (i in seq_along(cn)){
+  print(xyplot(outcome_28d ~ dfData[,cn[i]], groups=Viremia, data=dfData, type=c('g', 'r', 'p'),
+               auto.key=T, xlab=cn[i]))
+  
+  print(xyplot(outcome_28d ~ dfData[,cn[i]], groups=Viremia, data=dfData, type=c('g', 'smooth', 'p'),
+               auto.key=T, xlab=cn[i]))
+  
+}
+dev.off(dev.cur())
+
+
 ########################## perform a random forest step
 dfData = lData.train$data
 fGroups = lData.train$covariates$outcome_28d
@@ -126,7 +150,7 @@ lStanData = list(Ntotal=length(lData$resp), Ncol=ncol(lData$mModMatrix), X=lData
 # }
 
 
-fit.stan = sampling(stanDso, data=lStanData, iter=4000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4,# init=initf,
+fit.stan = sampling(stanDso, data=lStanData, iter=1000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4,# init=initf,
                     control=list(adapt_delta=0.99, max_treedepth = 13))
 
 #save(fit.stan, file='temp/fit.stan.binom_guess.rds')
@@ -191,7 +215,7 @@ xyplot(ivPredict ~ fGroups, xlab='Actual Group',
 dim(dfData)
 mData = as.matrix(dfData[,-19])
 length(as.vector(mData))
-mCor = cor((mData+runif(1275, 1e-4, 1e-3)), use="na.or.complete")
+mCor = cor((mData+runif(1425, 1e-4, 1e-3)), use="na.or.complete")
 library(caret)
 image(mCor)
 ### find the columns that are correlated and should be removed
@@ -201,9 +225,9 @@ data.frame(n)
 #   (abs(mCor[,x]) >= 0.7)
 # })
 # 
-# n = sapply(n, function(x) {
-#   rownames(mCor)[(abs(mCor[,x]) >= 0.7)]
-# })
+n = sapply(n, function(x) {
+  rownames(mCor)[(abs(mCor[,x]) >= 0.7)]
+})
 # 
 # n = c(n[1,], n[2,])
 # 
@@ -217,10 +241,13 @@ data.frame(n)
 # colnames(lData.train$data[,i])
 # lData.train$data = lData.train$data[,-i]
 
-cvTopVariables.rf = rownames(CVariableSelection.RandomForest.getVariables(oVar.r))[1:6]
-cvTopVariables.bin = names(m)[1:8]
+cvTopVariables.rf = rownames(CVariableSelection.RandomForest.getVariables(oVar.r))[1:8]
+cvTopVariables.bin = names(m)[1:6]
 cvTopVariables = unique(c(cvTopVariables.rf, cvTopVariables.bin))
 
+lData.train$data$Age_vir = lData.train$data$Age * lData.train$data$Viremia
+lData.train$data$Age_vir2 = lData.train$data$Age_vir^2
+cvTopVariables = cvTopVariables[-4]
 lData.train$data = lData.train$data[,cvTopVariables]
 ########################## perform a second random forest step
 dfData = lData.train$data
@@ -257,7 +284,7 @@ initf = function(chain_id = 1) {
 }
 
 
-fit.stan.2 = sampling(stanDso, data=lStanData, iter=4000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4, init=initf,
+fit.stan.2 = sampling(stanDso, data=lStanData, iter=1000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4, init=initf,
                     control=list(adapt_delta=0.99, max_treedepth = 13))
 
 #save(fit.stan, file='temp/fit.stan.binom_guess.rds')
@@ -364,7 +391,7 @@ initf = function(chain_id = 1) {
 }
 
 
-fit.stan.3 = sampling(stanDso, data=lStanData, iter=4000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4, init=initf,
+fit.stan.3 = sampling(stanDso, data=lStanData, iter=1000, chains=4, pars=c('tau', 'betas2', 'log_lik'), cores=4, init=initf,
                     control=list(adapt_delta=0.99, max_treedepth = 13))
 
 #save(fit.stan, file='temp/fit.stan.binom_guess.rds')
@@ -410,7 +437,7 @@ xyplot(ivPredict ~ fGroups, xlab='Actual Group',
        ylab='Predicted Probability of Died',
        data=dfData)
 # # outlier samples
-# i = which(ivPredict < 0.5 & dfData$fGroups == 'DIED')
+i = which(ivPredict < 0.5 & dfData$fGroups == '1')
 # p = rep('ALIVE', times=length(dfData$fGroups))
 # p[ivPredict > 0.5] = 'DIED'
 # table(dfData$fGroups, p)
@@ -475,10 +502,10 @@ rownames(ct.1@se)[i[-1]] = colnames(mCoef)
 plot(ct.1, pars=c(colnames(mCoef)))
 
 ## select variables to drop
-# drop some variables that show consistent zero coefficients under 
+# drop some variables that show consistent zero coefficients or opposite under 
 # sub-sampling - see the loop above where this was done to select
 # the variables after fitting multiple sub-sampled models
-i = grep('Crea|Fi|BM', cvTopVariables)
+i = grep('Crea|Fi|Hema', cvTopVariables)
 cvTopVariables[i]
 cvTopVariables = cvTopVariables[-i]
 
@@ -486,12 +513,12 @@ dfData = lData.train$data
 fGroups = lData.train$covariates$outcome_28d
 dim(dfData)
 
-oVar.sub = CVariableSelection.ReduceModel(dfData, fGroups, boot.num = 100)
+oVar.sub = CVariableSelection.ReduceModel(dfData, fGroups, boot.num = 200)
 
 # plot the number of variables vs average error rate
 plot.var.selection(oVar.sub)
 
-cvVar = CVariableSelection.ReduceModel.getMinModel(oVar.sub, size = 4)
+cvVar = CVariableSelection.ReduceModel.getMinModel(oVar.sub, size = 2)
 
 
 oCV.lda = CCrossValidation.LDA(dfData[,cvVar], dfData[,cvVar], fGroups, fGroups, level.predict = '1',
@@ -499,11 +526,12 @@ oCV.lda = CCrossValidation.LDA(dfData[,cvVar], dfData[,cvVar], fGroups, fGroups,
 
 plot.cv.performance(oCV.lda)
 
+rm(stanDso)
 url = 'https://raw.githubusercontent.com/uhkniazi/CCrossValidation/experimental/bernoulli.stan'
 download(url, 'bernoulli.stan')
 
 oCV.s = CCrossValidation.StanBern(dfData[,cvVar], dfData[,cvVar], fGroups, fGroups, level.predict = '1',
-                                  boot.num = 30, k.fold = 10, ncores = 2, nchains = 2) 
+                                  boot.num = 15, k.fold = 10, ncores = 2, nchains = 2) 
 
 save(oCV.s, file='temp/oCV.stan.rds')
 
