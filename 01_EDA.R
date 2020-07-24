@@ -494,12 +494,16 @@ for(b in 1:10){
 ct.1 = coeftab(lFits[[1]], lFits[[2]], lFits[[3]], 
                lFits[[4]], lFits[[5]], lFits[[6]],
                lFits[[7]], lFits[[8]], lFits[[9]],
-               lFits[[10]])
+               lFits[[10]],
+               lFits[[11]], lFits[[12]], lFits[[13]],
+               lFits[[14]], lFits[[15]], lFits[[16]],
+               lFits[[17]], lFits[[18]], lFits[[19]],
+               lFits[[20]])
 rn = rownames(ct.1@coefs)
 i = grep('betas', rn)
 rownames(ct.1@coefs)[i[-1]] = colnames(mCoef)
 rownames(ct.1@se)[i[-1]] = colnames(mCoef)
-plot(ct.1, pars=c(colnames(mCoef)))
+plot(ct.1, pars=c(colnames(mCoef)), prob=0.1)
 
 ## select variables to drop
 # drop some variables that show consistent zero coefficients or opposite under 
